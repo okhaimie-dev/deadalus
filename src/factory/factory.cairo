@@ -14,6 +14,7 @@ mod Factory {
     use starknet::{
         ContractAddress, ClassHash, get_caller_address, get_contract_address, contract_address_const
     };
+    use deadalus::factory::IFactory;
 
     // Components.
     component!(path: OwnableComponent, storage: ownable, event: OwnableEvent);
@@ -51,10 +52,16 @@ mod Factory {
         property_class_hash: ClassHash,
     ) {
         // Initialize the owner.
-        self.ownable.initialize(owner);
+        self.ownable.initializer(owner);
         self.property_class_hash.write(property_class_hash);
     }
 
     #[abi(embed_v0)]
-    impl DeadalusPropertyFactoryImpl of IFactory<ContractState> {}
+    impl DeadalusPropertyFactoryImpl of IFactory<ContractState> {
+        fn create_property(ref self: ContractState) -> u256 {
+            let property_address = 52;
+
+            property_address
+        }
+    }
 }
