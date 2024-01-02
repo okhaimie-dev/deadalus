@@ -1,6 +1,3 @@
-use openzeppelin::token::erc20::interface::{IERC20, ERC20ABIDispatcher, ERC20ABIDispatcherTrait};
-use starknet::ContractAddress;
-
 #[starknet::contract]
 mod Factory {
     use openzeppelin::access::ownable::OwnableComponent;
@@ -48,12 +45,10 @@ mod Factory {
     #[constructor]
     fn constructor(
         ref self: ContractState,
-        owner: ContractAddress,
-        property_class_hash: ClassHash,
+        owner: ContractAddress
     ) {
         // Initialize the owner.
         self.ownable.initializer(owner);
-        self.property_class_hash.write(property_class_hash);
     }
 
     #[abi(embed_v0)]

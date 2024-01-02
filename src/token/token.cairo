@@ -1,7 +1,5 @@
-use starknet::ContractAddress;
-
 #[starknet::contract]
-mod DeadalusToken {
+mod DeadalusERC20 {
     use openzeppelin::access::ownable::OwnableComponent;
     use openzeppelin::access::ownable::ownable::OwnableComponent::InternalTrait as OwnableInternalTrait;
     use openzeppelin::token::erc20::ERC20Component;
