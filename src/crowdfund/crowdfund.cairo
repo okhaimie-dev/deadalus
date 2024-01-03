@@ -1,3 +1,5 @@
+use starknet::ContractAddress;
+
 const THREAD_CREATOR: felt252 = selector!("THREAD_CREATOR");
 const DONOR: felt252 = selector!("DONOR");
 const VALIDATOR: felt252 = selector!("VALIDATOR");
@@ -19,13 +21,13 @@ mod Crowdfund {
     use openzeppelin::access::accesscontrol::AccessControlComponent;
     use openzeppelin::access::accesscontrol::DEFAULT_ADMIN_ROLE;
     use openzeppelin::introspection::src5::SRC5Component;
-    use openzeppelin::token::erc20::ERC20Component;
-    use starknet::ContractAddress;
+    use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
+    use starknet::{ContractAddress, get_caller_address, get_contract_address};
     use super::{THREAD_CREATOR, DONOR, VALIDATOR, Campaign};
+    use deadalus::crowdfund::ICrowdfund;
 
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
-    component!(path: ERC20Component, storage: erc20, event: ERC20Event);
 
     // AccessControl
     #[abi(embed_v0)]
@@ -37,21 +39,16 @@ mod Crowdfund {
     #[abi(embed_v0)]
     impl SRC5Impl = SRC5Component::SRC5Impl<ContractState>;
 
-    // ERC20
-    #[abi(embed_v0)]
-    impl ERC20Impl = ERC20Component::ERC20Impl<ContractState>;
-    #[abi(embed_v0)]
-    impl ERC20MetadataImpl = ERC20Component::ERC20MetadataImpl<ContractState>;
-    impl ERC20InternalImpl = ERC20Component::InternalImpl<ContractState>;
-
     #[storage]
     struct Storage {
+        token: IERC20Dispatcher,
+        last_campaign_id: u256,
+        campaigns: LegacyMap<u256, Campaign>,
+        pledged_amount: LegacyMap<(u256, ContractAddress), u256>,
         #[substorage(v0)]
         accesscontrol: AccessControlComponent::Storage,
         #[substorage(v0)]
-        src5: SRC5Component::Storage,
-        #[substorage(v0)]
-        erc20: ERC20Component::Storage
+        src5: SRC5Component::Storage
     }
 
     #[event]
@@ -66,15 +63,13 @@ mod Crowdfund {
         #[flat]
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
-        SRC5Event: SRC5Component::Event,
-        #[flat]
-        ERC20Event: ERC20Component::Event
+        SRC5Event: SRC5Component::Event
     }
 
     // Emitted for Launch event.
     #[derive(Drop, starknet::Event)]
     struct Launch {
-        id: u128,
+        campaign_id: u128,
         creator: ContractAddress,
         target: u128,
         start: felt252,
@@ -84,13 +79,13 @@ mod Crowdfund {
     // Emitted for Cancel event.
     #[derive(Drop, starknet::Event)]
     struct Cancel {
-        id: u128
+        campaign_id: u128
     }
 
     // Emitted for Pledge event.
     #[derive(Drop, starknet::Event)]
     struct Pledge {
-        id: u128,
+        campaign_id: u128,
         caller: ContractAddress,
         amount: u128
     }
@@ -98,7 +93,7 @@ mod Crowdfund {
     // Emitted for Unpledge event.
     #[derive(Drop, starknet::Event)]
     struct Unpledge {
-        id: u128,
+        campaign_id: u128,
         caller: ContractAddress,
         amount: u128
     }
@@ -106,13 +101,13 @@ mod Crowdfund {
     // Emitted for Claim event.
     #[derive(Drop, starknet::Event)]
     struct Claim {
-        id: u128
+        campaign_id: u128
     }
 
     // Emitted for Refund event.
     #[derive(Drop, starknet::Event)]
     struct Refund {
-        id: u128,
+        campaign_id: u128,
         caller: ContractAddress,
         amount: u128
     }
@@ -120,22 +115,90 @@ mod Crowdfund {
     #[constructor]
     fn constructor(
         ref self: ContractState,
-        name: felt252,
-        symbol: felt252,
+        token: ContractAddress,
         admin: ContractAddress
     ) {
-        // ERC20-related initialization
-        self.erc20.initializer(name, symbol);
+        // Crowdfund token initialization
+        self.token.write(IERC20Dispatcher { contract_address: token });
 
         // AccessControl-related initialization
         self.accesscontrol.initializer();
         self.accesscontrol._grant_role(DEFAULT_ADMIN_ROLE, admin);
     }
 
-    /// This function can only be called by a minter.
-    #[external(v0)]
-    fn mint(ref self: ContractState, recipient: ContractAddress, amount: u256) {
-        self.accesscontrol.assert_only_role(MINTER_ROLE);
-        self.erc20._mint(recipient, amount);
+    #[abi(embed_v0)]
+    impl Crowdfund of ICrowdfund<ContractState> {
+        fn launch(ref self: ContractState) {
+            let new_campaign_id = self.last_campaign_id.read() + 1;
+            let caller = get_caller_address();
+            let new_campaign = Campaign {
+                campaign_id: new_campaign_id, creator: caller, claimed: false, pledged: 0
+            };
+            self.campaigns.write(new_campaign_id, new_campaign);
+            self.last_campaign_id.write(new_campaign_id);
+            self.emit(Launch { campaign_id: new_campaign_id, creator: caller });
+        }
+
+        fn pledge(ref self: ContractState, campaign_id: u256, amount: u256) {
+            let caller = get_caller_address();
+            let this = get_contract_address();
+
+            assert(self.last_campaign_id.read() <= campaign_id, 'no campaign_id found');
+
+            let mut current_campaign = self.campaigns.read(campaign_id);
+            assert(current_campaign.claimed == false, 'already claimed');
+
+            let token: IERC20Dispatcher = self.token.read();
+
+            current_campaign.pledged += amount;
+            let current_pledged_amount = self.pledged_amount.read((campaign_id, caller));
+            self.pledged_amount.write((campaign_id, caller), amount + current_pledged_amount);
+            self.campaigns.write(campaign_id, current_campaign);
+            token.transfer_from(caller, this, amount);
+
+            self.emit(Pledge { campaign_id: campaign_id, caller: caller, amount: amount });
+        }
+
+        fn unpledge(ref self: ContractState, campaign_id: u256, amount: u256) {
+            let caller = get_caller_address();
+            let this = get_contract_address();
+
+            assert(self.last_campaign_id.read() <= campaign_id, 'no campaign_id found');
+
+            let mut current_campaign = self.campaigns.read(campaign_id);
+            assert(self.last_campaign_id.read() <= campaign_id, 'no campaign_id found');
+            assert(current_campaign.claimed == false, 'already claimed');
+
+            let current_pledged_amount = self.pledged_amount.read((campaign_id, caller));
+            assert(current_pledged_amount >= amount, 'pledged amount not enough');
+
+            let token: IERC20Dispatcher = self.token.read();
+
+            current_campaign.pledged -= amount;
+            self.pledged_amount.write((campaign_id, caller), current_pledged_amount - amount);
+            self.campaigns.write(campaign_id, current_campaign);
+            token.transfer(caller, amount);
+
+            self.emit(Unpledge { campaign_id: campaign_id, caller: caller, amount: amount });
+        }
+
+        fn claim(ref self: ContractState, campaign_id: u256) {
+            let caller = get_caller_address();
+            let this = get_contract_address();
+
+            assert(self.last_campaign_id.read() <= campaign_id, 'no campaign_id found');
+
+            let mut current_campaign = self.campaigns.read(campaign_id);
+            assert(current_campaign.creator == caller, 'only owner allowed');
+            assert(current_campaign.claimed == false, 'already claimed');
+
+            let token: IERC20Dispatcher = self.token.read();
+
+            current_campaign.claimed = true;
+            self.campaigns.write(campaign_id, current_campaign);
+            token.transfer(caller, current_campaign.pledged);
+
+            self.emit(Claim { campaign_id: campaign_id, creator: caller, amount: current_campaign.pledged });
+        }
     }
 }
