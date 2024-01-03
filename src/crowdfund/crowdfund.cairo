@@ -7,12 +7,11 @@ const VALIDATOR: felt252 = selector!("VALIDATOR");
 // Campaign struct for crowdfunding.
 #[derive(Drop, Serde, Copy, starknet::Store)]
 struct Campaign {
+    campaign_id: u256,
     creator: ContractAddress,
-    target: u128,
+    target: u256,
     // Total amount pledged.
-    pledged: u128,
-    start: felt252,
-    deadline: u128,
+    pledged: u256,
     claimed: bool
 }
 
@@ -55,11 +54,9 @@ mod Crowdfund {
     #[derive(Drop, starknet::Event)]
     enum Event {
         Launch: Launch,
-        Cancel: Cancel,
         Pledge: Pledge,
         Unpledge: Unpledge,
         Claim: Claim,
-        Refund: Refund,
         #[flat]
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
@@ -69,47 +66,33 @@ mod Crowdfund {
     // Emitted for Launch event.
     #[derive(Drop, starknet::Event)]
     struct Launch {
-        campaign_id: u128,
+        campaign_id: u256,
         creator: ContractAddress,
-        target: u128,
-        start: felt252,
-        deadline: u128,
-    }
-
-    // Emitted for Cancel event.
-    #[derive(Drop, starknet::Event)]
-    struct Cancel {
-        campaign_id: u128
+        target: u256
     }
 
     // Emitted for Pledge event.
     #[derive(Drop, starknet::Event)]
     struct Pledge {
-        campaign_id: u128,
+        campaign_id: u256,
         caller: ContractAddress,
-        amount: u128
+        amount: u256
     }
 
     // Emitted for Unpledge event.
     #[derive(Drop, starknet::Event)]
     struct Unpledge {
-        campaign_id: u128,
+        campaign_id: u256,
         caller: ContractAddress,
-        amount: u128
+        amount: u256
     }
 
     // Emitted for Claim event.
     #[derive(Drop, starknet::Event)]
     struct Claim {
-        campaign_id: u128
-    }
-
-    // Emitted for Refund event.
-    #[derive(Drop, starknet::Event)]
-    struct Refund {
-        campaign_id: u128,
-        caller: ContractAddress,
-        amount: u128
+        campaign_id: u256,
+        creator: ContractAddress,
+        amount: u256
     }
 
     #[constructor]
@@ -128,15 +111,15 @@ mod Crowdfund {
 
     #[abi(embed_v0)]
     impl Crowdfund of ICrowdfund<ContractState> {
-        fn launch(ref self: ContractState) {
-            let new_campaign_id = self.last_campaign_id.read() + 1;
+        fn launch(ref self: ContractState, target:u256) {
+            let new_campaign_id: u256 = self.last_campaign_id.read() + 1;
             let caller = get_caller_address();
             let new_campaign = Campaign {
-                campaign_id: new_campaign_id, creator: caller, claimed: false, pledged: 0
+                campaign_id: new_campaign_id, target: target, creator: caller, claimed: false, pledged: 0
             };
             self.campaigns.write(new_campaign_id, new_campaign);
             self.last_campaign_id.write(new_campaign_id);
-            self.emit(Launch { campaign_id: new_campaign_id, creator: caller });
+            self.emit(Launch { campaign_id: new_campaign_id, target: target, creator: caller });
         }
 
         fn pledge(ref self: ContractState, campaign_id: u256, amount: u256) {
