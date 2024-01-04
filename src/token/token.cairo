@@ -26,7 +26,6 @@ mod DeadalusERC20 {
 
     #[storage]
     struct Storage {
-        factory_contract: ContractAddress,
         // Components.
         #[substorage(v0)]
         ownable: OwnableComponent::Storage,
@@ -41,5 +40,19 @@ mod DeadalusERC20 {
         OwnableEvent: OwnableComponent::Event,
         #[flat]
         ERC20Event: ERC20Component::Event
+    }
+
+    #[constructor]
+    fn constructor(
+        ref self: ContractState,
+        name: felt252,
+        symbol: felt252,
+        fixed_supply: u256,
+        recipent: ContractAddress
+    ){
+        // Initialize the ERC20 token.
+        self.erc20.initializer(name, symbol);
+
+        self.erc20._mint(recipent, fixed_supply)
     }
 }
